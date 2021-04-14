@@ -1,79 +1,81 @@
 const core = require("@actions/core")
 const github = require("@actions/github")
-const { trelloFetch } = require("./trelloUtils")
+const {
+  getCards,
+  getCustomField,
+  getCardCustomItemFields,
+  updateCustomField,
+} = require("./trelloRequests")
+const { getHeadCommitShaForPR, getCommitsFromMaster } = require("./githubRequests")
+const { log } = require("./utils/log")
 
 async function run() {
   try {
+    const commits = await findCommitsFromShaToMaster()
     const stagingCustomFieldItem = await getStagingCustomFieldItem()
-    const filteredCards = await getCardsWithPRAttachments()
-    const { data: pullRequestsOnCurrentSha } = await getPullRequestsWithCurrentSha()
+    const cardsWithPRAttached = await getCardsWithPRAttached()
 
-    filteredCards.forEach(async (card) => {
+    cardsWithPRAttached.forEach(async (card) => {
       setCardCustomFieldValue({
         card,
-        prs: pullRequestsOnCurrentSha,
+        commits,
         customFieldItem: stagingCustomFieldItem,
       })
     })
   } catch (error) {
+    log(error)
     core.setFailed(error.message)
   }
 }
 
 run()
 
-async function getCardsWithPRAttachments() {
-  const response = await trelloFetch(
-    `boards/${core.getInput("trello_board_id")}/cards?attachments=true`,
-  )
-  const cards = await response.json()
+async function getCardsWithPRAttached() {
+  const cards = await getCards()
   return cards.filter((card) => card.attachments.some(isPullRequestAttachment))
 }
 
-async function getEnvironmentCustomField() {
-  const response = await trelloFetch(`boards/${core.getInput("trello_board_id")}/customFields`)
-  const customFields = await response.json()
-  return customFields.find(({ name }) => name === core.getInput("trello_custom_field_name"))
-}
-
 async function getStagingCustomFieldItem() {
-  const customField = await getEnvironmentCustomField()
+  const customField = await getCustomField()
   return customField.options.find(
     (option) => Object.values(option.value)[0] === core.getInput("trello_custom_field_value"),
   )
 }
 
-async function setCardCustomFieldValue({ card, prs, customFieldItem }) {
+async function setCardCustomFieldValue({ card, commits, customFieldItem }) {
   const attachments = card.attachments.filter(isPullRequestAttachment)
-  const attachmentIsAMatchedPR = attachments.some((attachment) => {
-    const prId = parseInt(attachment.url.split("/").pop(), 10)
-    return prs.some((pr) => pr.number === prId)
-  })
+  const attachment = attachments[0] // TODO: support multiple PR attachments
+  const prId = attachment.url.split("/").pop()
+  const headCommitSha = await getHeadCommitShaForPR(prId)
+  const attachmentIsAMatchedPR = commits.some((commit) => commit.sha === headCommitSha)
   const body = attachmentIsAMatchedPR ? { idValue: customFieldItem.id } : { idValue: "", value: "" }
 
   if (!attachmentIsAMatchedPR && core.getInput("add_only")) return
-  return await updateCustomFieldToStaging({ card, customFieldItem, body })
+
+  const customFieldItems = await getCardCustomItemFields(card)
+  const alreadyHasEnvironmentSet = customFieldItems.some(
+    ({ idCustomField }) => customFieldItem.idCustomField === idCustomField,
+  )
+  if (alreadyHasEnvironmentSet) {
+    log(`syncing card: ${card.name}; already set`)
+    return
+  }
+  log(`syncing card: ${card.name}; ${attachmentIsAMatchedPR ? "adding" : "removing"}`)
+  return await updateCustomField({ card, customFieldItem, body })
 }
 
-async function updateCustomFieldToStaging({ card, customFieldItem, body }) {
-  return await trelloFetch(`cards/${card.id}/customField/${customFieldItem.idCustomField}/item`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
-}
+// we only get 250 per page so we will iterate over pages to grab more if there is more
+async function findCommitsFromShaToMaster() {
+  const { commits, total_commits } = await getCommitsFromMaster()
+  let allCommits = commits
+  const extraPagesCount = Math.min(Math.floor(total_commits / 250), 5) // let's cap at 1500 commits
+  for (let index = 0; index < extraPagesCount; index++) {
+    const page = index + 2 // we already loaded page 1
+    const { commits: pageCommits } = await getCommitsFromMaster({ page })
+    allCommits = [...allCommits, ...pageCommits]
+  }
 
-async function getPullRequestsWithCurrentSha() {
-  const owner = github.context.payload.repository.owner.name
-  const repo = github.context.payload.repository.name
-  const currentSha = github.context.sha
-  const githubToken = core.getInput("github_token")
-  const octokit = github.getOctokit(githubToken)
-  return await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
-    owner,
-    repo,
-    commit_sha: currentSha,
-  })
+  return allCommits
 }
 
 function isPullRequestAttachment(attachment) {
