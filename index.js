@@ -57,11 +57,12 @@ async function setCardCustomFieldValue({ card, commits, customFieldItem }) {
   const headCommitSha = await getHeadCommitShaForPR(prId)
   const attachmentIsAMatchedPR = commits.some((commit) => commit.sha === headCommitSha)
 
-  if (attachmentIsAMatchedPR) {
-    return await addCustomFieldItemToCard({ card, customFieldItem })
-  } else {
-    return await removeCustomFieldItemFromCard({ card, customFieldItem })
-  }
+  // temporarily disable
+  // if (attachmentIsAMatchedPR) {
+  //   return await addCustomFieldItemToCard({ card, customFieldItem })
+  // } else {
+  //   return await removeCustomFieldItemFromCard({ card, customFieldItem })
+  // }
 }
 
 async function addCustomFieldItemToCard({ card, customFieldItem }) {
