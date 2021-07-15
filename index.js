@@ -10,6 +10,14 @@ const { getHeadCommitShaForPR, getCommitsFromMaster } = require("./githubRequest
 const { log } = require("./utils/log")
 
 async function run() {
+  // try {
+  process.chdir(process.env.GITHUB_WORKSPACE)
+  // } catch (error) {
+  //   log("Error setting up git")
+  //   log(error)
+  //   core.setFailed(`Error setting up git ${error.message}`)
+  // }
+
   try {
     const commits = await findCommitsFromShaToMaster()
     const stagingCustomFieldItem = await getStagingCustomFieldItem()
