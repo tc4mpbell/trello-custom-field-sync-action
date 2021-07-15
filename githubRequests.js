@@ -1,7 +1,7 @@
 const core = require("@actions/core")
 const github = require("@actions/github")
-const { exec } = require("utils/exec")
-const { log } = require("utils/log")
+const { exec } = require("./utils/exec")
+const { log } = require("./utils/log")
 
 exports.getHeadCommitShaForPR = async function getHeadCommitShaForPR(id) {
   const owner = github.context.payload.repository.owner.name
