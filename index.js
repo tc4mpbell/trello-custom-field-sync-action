@@ -6,8 +6,9 @@ const {
   getCardCustomItemFields,
   updateCustomField,
 } = require("./trelloRequests")
-const { getHeadCommitShaForPR, getCommitsFromMaster } = require("./githubRequests")
+const { getHeadCommitShaForPR, getCommitsFromMaster, getHeadRefForPR } = require("./githubRequests")
 const { log } = require("./utils/log")
+const { exec } = require("./utils/exec")
 
 async function run() {
   // try {
@@ -19,15 +20,16 @@ async function run() {
   // }
 
   try {
-    const commits = await findCommitsFromShaToMaster()
+    // const commits = await findCommitsFromShaToMaster()
     const stagingCustomFieldItem = await getStagingCustomFieldItem()
     const cardsWithPRAttached = await getCardsWithPRAttached()
 
-    cardsWithPRAttached.forEach(async (card) => {
+    cardsWithPRAttached.forEach(async (card, i) => {
       setCardCustomFieldValue({
         card,
-        commits,
+        // commits,
         customFieldItem: stagingCustomFieldItem,
+        i,
       })
     })
   } catch (error) {
@@ -50,12 +52,16 @@ async function getStagingCustomFieldItem() {
   )
 }
 
-async function setCardCustomFieldValue({ card, commits, customFieldItem }) {
+async function setCardCustomFieldValue({ card, commits, customFieldItem, i }) {
   const attachments = card.attachments.filter(isPullRequestAttachment)
   const attachment = attachments[0] // TODO: support multiple PR attachments
   const prId = attachment.url.split("/").pop()
   const headCommitSha = await getHeadCommitShaForPR(prId)
-  const attachmentIsAMatchedPR = commits.some((commit) => commit.sha === headCommitSha)
+  const headRef = await getHeadRefForPR(prId)
+  if (i === 0) {
+    const commitIsMerged = await checkIfCommitIsMerged(headRef, headCommitSha)
+  }
+  // const attachmentIsAMatchedPR = commits.some((commit) => commit.sha === headCommitSha)
 
   // temporarily disable
   // if (attachmentIsAMatchedPR) {
@@ -109,4 +115,29 @@ function isPullRequestAttachment(attachment) {
   const owner = github.context.payload.repository.owner.name
   const repo = github.context.payload.repository.name
   return attachment.url.includes(`github.com/${owner}/${repo}/pull`)
+}
+
+async function checkIfCommitIsMerged(ref, sha) {
+  const baseRef = github.context.ref.replace("refs/heads/", "")
+  try {
+    try {
+      await exec(`git checkout ${ref}`)
+    } catch (e) {
+      log(`${ref} is no longer a valid branch`)
+      // return
+    }
+    const { output: ancestorHash, error, exitCode } = await exec(
+      `git merge-base origin/${baseRef} ${sha}`,
+    )
+    log({ ancestorHash, error, exitCode })
+    // const { output: treeId } = await exec(`git rev-parse origin/${ref}^{tree}`)
+    // const { output: danglingCommitId } = await exec(
+    //   `git commit-tree ${treeId} -p ${ancestorHash} -m Temp commit for ${ref}`,
+    // )
+    // const { output } = await exec(`git cherry origin/${baseRef} ${danglingCommitId}`)
+    log({ ancestorHash /*treeId, danglingCommitId, output*/ })
+    // return output.startsWith("-")
+  } catch (e) {
+    log(`ERROR: ${e}`)
+  }
 }
